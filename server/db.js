@@ -11,6 +11,18 @@ const DB_FILE = path.join(DATA_DIR, 'seating.sqlite');
 let dbInstance = null;
 let SQL = null;
 
+function isCorruptDatabaseError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /database disk image is malformed|not a database|file is encrypted/i.test(message);
+}
+
+function backupCorruptDatabase() {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupFile = `${DB_FILE}.corrupt-${timestamp}`;
+  fs.copyFileSync(DB_FILE, backupFile);
+  console.error(`Corrupt database preserved at ${backupFile}`);
+}
+
 export async function getDatabase() {
   if (dbInstance) {
     return dbInstance;
@@ -28,8 +40,17 @@ export async function getDatabase() {
     try {
       const fileBuffer = fs.readFileSync(DB_FILE);
       dbInstance = new SQL.Database(fileBuffer);
+      initTables(dbInstance);
+      saveDatabase(dbInstance);
+      return dbInstance;
     } catch (err) {
-      console.error('Error loading existing database file, creating new one:', err);
+      if (!isCorruptDatabaseError(err)) {
+        throw err;
+      }
+
+      console.error('Existing database is corrupt; creating a fresh database:', err);
+      // Keep the original bytes available for manual recovery before replacing it.
+      backupCorruptDatabase();
       dbInstance = new SQL.Database();
     }
   } else {
